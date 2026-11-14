@@ -41,6 +41,8 @@ pub struct Layout {
     pub p_asking: u64,
     /// pointer naar het record met tactisch begrip (zie understanding.rs)
     pub p_understanding: u64,
+    /// 15 positiecijfers (u8 1–20); de attributen liggen er vast omheen (zie tactic.rs)
+    pub p_positions: u64,
     /// u32 met de editorvlaggen van de manager (registratie/rugnummers altijd), als bekend
     pub human_flags: Option<u64>,
     /// blokgroottes van de allocator van de game (FMLibreEditor [heap]): een lijst van n pointers
@@ -69,6 +71,7 @@ pub const MAC: Layout = Layout {
     p_asking: 0x230,
     // niet gemeten op de Mac: Windows 0x100 min het vbptr-woord; het record wordt streng gecontroleerd
     p_understanding: 0xF8,
+    p_positions: 0x148,
     human_flags: None,
     heap_blocks: &[144, 160, 192, 224, 256, 288, 320, 384, 448, 512, 640, 768, 896, 1024, 1280, 1536, 2048, 2560, 3072, 3584, 4096],
 };
@@ -97,6 +100,7 @@ pub const WIN: Layout = Layout {
     p_asking: 0x238,
     // gemeten (8 nov 2026) door FM's editor-actie "Maximise Tactical Understanding" te ontleden
     p_understanding: 0x100,
+    p_positions: 0x150,
     human_flags: Some(0x3FC),
     heap_blocks: &[144, 160, 192, 224, 256, 288, 320, 384, 448, 512],
 };

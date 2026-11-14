@@ -97,6 +97,10 @@ pub struct LiveState {
     /// De build van FM is niet getest: de module staat op alleen lezen (tenzij toegestaan).
     pub untested_build: bool,
     pub sell: SellState,
+    /// tactieken en attributen van de selectie, voor de tactiekhulp (op verzoek opgehaald)
+    pub tactics: Option<crate::tactics::Data>,
+    pub tactics_error: String,
+    tactics_rx: Option<mpsc::Receiver<Result<Value, String>>>,
     aux_rx: Option<mpsc::Receiver<(Aux, Result<Value, String>)>>,
     rx: Option<mpsc::Receiver<Snapshot>>,
     train_rx: Option<mpsc::Receiver<(bool, bool, Result<Outcome, String>)>>,
@@ -127,6 +131,9 @@ impl Default for LiveState {
             keep_understanding: false,
             untested_build: false,
             sell: SellState::default(),
+            tactics: None,
+            tactics_error: String::new(),
+            tactics_rx: None,
             aux_rx: None,
             rx: None,
             train_rx: None,
@@ -222,6 +229,24 @@ impl LiveState {
         self.sell.status = t!("Kopen…", "Buying…").into();
         self.sell.error = false;
         self.aux(ctx, Aux::Buy, json!({"cmd": "buy", "uid": uid, "club": club, "fee": fee, "wage": wage}));
+    }
+
+    /// De tactieken en de attributen van de selectie ophalen (alleen lezen).
+    pub fn load_tactics(&mut self, ctx: &egui::Context) {
+        if self.tactics_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx2 = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(agent::request(json!({"cmd": "tactics"})).map_err(|e| format!("{e:#}")));
+            ctx2.request_repaint();
+        });
+        self.tactics_rx = Some(rx);
+    }
+
+    pub fn tactics_busy(&self) -> bool {
+        self.tactics_rx.is_some()
     }
 
     pub fn club_name(&self) -> Option<String> {
@@ -382,6 +407,18 @@ impl LiveState {
                 if !s.message.is_empty() || was != self.connected {
                     self.status = if s.message.is_empty() { t!("Verbonden met FM27.", "Connected to FM27.").into() } else { s.message };
                     self.status_error = s.error;
+                }
+            }
+        }
+        if let Some(rx) = &self.tactics_rx {
+            if let Ok(r) = rx.try_recv() {
+                self.tactics_rx = None;
+                match r.and_then(|v| serde_json::from_value::<crate::tactics::Data>(v).map_err(|e| e.to_string())) {
+                    Ok(d) => {
+                        self.tactics = Some(d);
+                        self.tactics_error.clear();
+                    }
+                    Err(e) => self.tactics_error = e,
                 }
             }
         }

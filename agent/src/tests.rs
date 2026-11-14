@@ -848,11 +848,12 @@ fn build_market(abi: Abi, l: &Layout, base: u64, staff_rva: u64, clubs_rva: u64,
 
     // opstellingen: die van Ajax, die van een nationaal team, en een vrijgegeven blok
     let vt = fake_class(abi, base, "simatch", "PREPARED_TACTICS_CREATOR_ARRAY");
-    let selection = |h: &mut Heap, ids: &[u32], sound: bool| {
+    let selection = |h: &mut Heap, ids: &[u32], sound: bool, block: u64| {
         let o = h.alloc(0x90);
         h.w64(o, vt);
         if sound {
             let a = h.alloc(8);
+            h.w64(a, block);
             h.w64(o + 8, a);
             h.w64(o + 16, a + 8);
             h.w64(o + 24, a + 8);
@@ -862,9 +863,24 @@ fn build_market(abi: Abi, l: &Layout, base: u64, staff_rva: u64, clubs_rva: u64,
         }
         o
     };
-    let our_selection = selection(&mut h, &[5003, 5001, 5004, 5002], true);
-    let national_selection = selection(&mut h, &[9001, 5001, 9002, 9003, 9004, 9005], true);
-    let _freed = selection(&mut h, &[5001, 5003, 5004], false);
+    // het tactiekblok van Ajax: rolmaskers met bal en zonder bal (Windows 0x158/0x478, Mac 8
+    // verder), de stijl, en de tabel die zegt welke plek zonder bal bij een plek met bal hoort
+    let block = h.alloc(0x800);
+    let d = l.p_positions - 0x148;
+    let ip_bits = [12u64, 1, 1, 3, 3, 15, 57, 57, 27, 43, 40];
+    let oop_bits = [1u64, 10, 5, 5, 10, 16, 38, 27, 27, 38, 42];
+    for i in 0..11u64 {
+        h.w64(block + 0x160 - d + i * 0x48, 1 << ip_bits[i as usize] | 1 << 21);
+        h.w64(block + 0x480 - d + i * 0x48, 1 << oop_bits[i as usize] | 1 << 22);
+    }
+    h.put(block + 0x100, b"EGEG");
+    h.put(block + 0x7A8 - d, &[0x1B, 0, 3, 2, 4, 1, 5, 7, 8, 6, 9, 10]);
+    // Klaassen: natuurlijke aanvallende middenvelder met passing 90 (FM toont 18)
+    h.w8(p3 + l.p_positions + 10, 20);
+    h.w8(p3 + 0x15E + d, 90);
+    let our_selection = selection(&mut h, &[5003, 5001, 5004, 5002], true, block);
+    let national_selection = selection(&mut h, &[9001, 5001, 9002, 9003, 9004, 9005], true, 0);
+    let _freed = selection(&mut h, &[5001, 5003, 5004], false, 0);
 
     h.install(true);
     statics.install(false);
@@ -896,6 +912,25 @@ fn run_market(l: &'static Layout, m: &Market) {
     assert_eq!(w["listed"], 1);
     assert_eq!(w["contract_ends"], json!({"year": 2029, "doy": 181}));
     assert_eq!(squad.as_array().unwrap().iter().find(|p| p["uid"] == 4).unwrap()["player_coach"], true);
+
+    // de tactiek van de club: rollen per plek, de volgorde zonder bal, en attributen en posities
+    let t = call(json!({"cmd": "tactics"})).unwrap();
+    assert_eq!(t["current"], 0);
+    assert_eq!(t["tactics"].as_array().unwrap().len(), 1);
+    let tac = &t["tactics"][0];
+    assert_eq!(tac["style"], "GEGE");
+    let slots = tac["slots"].as_array().unwrap();
+    assert_eq!(slots.iter().map(|s| s["ip"].as_u64().unwrap()).collect::<Vec<_>>(), [12, 1, 1, 3, 3, 15, 57, 57, 27, 43, 40]);
+    // plek 1 (met bal) hoort bij plek 3 zonder bal: de dekkende centrale verdediger (bit 5)
+    assert_eq!((slots[1]["oop"].as_u64(), slots[1]["oop_order"].as_u64()), (Some(5), Some(3)));
+    assert_eq!((slots[4]["oop"].as_u64(), slots[4]["oop_order"].as_u64()), (Some(10), Some(1)));
+    assert_eq!(slots[0]["uid"], 2, "Klaassen (persoon 5003) staat op de eerste plek");
+    assert_eq!(slots[1]["uid"], 37058888);
+    assert!(slots[4]["uid"].is_null(), "een lege plek heeft geen speler");
+    let k = t["players"].as_array().unwrap().iter().find(|p| p["uid"] == 2).unwrap();
+    assert_eq!(k["positions"][10], 20);
+    assert_eq!(k["attributes"]["passing"], 18);
+    assert_eq!(t["bench"].as_array().unwrap().len(), 0);
 
     // eerst alleen controleren: er verandert niets
     let before = snapshot();
