@@ -51,7 +51,7 @@ tools/research/      fmq.py (onderzoeksclient), offers.py, breakdown_labels.py (
 
 Alle opdrachten van de module: `ping`, `club`, `squad`, `set_finances`, `heal`, `lift_bans`, `inspire`, `undo`,
 `game_date`, `training_weeks`, `set_week`, `clubs`, `club_squad`, `sell`, `buy`, `understanding`, `max_understanding` (met `dry_run`),
-`human_flags`, `set_human_flags`, `tactics`,
+`human_flags`, `set_human_flags`, `tactics`, `teams`, `select`,
 `allow_untested`, en voor onderzoek `chain`, `census`, `class_of`, `read`, `find_u16`, `find_bytes`, `find_ptr`, `write` (alleen
 met `expect`), `discover`. Zie `agent/src/lib.rs`.
 
@@ -128,7 +128,7 @@ met `expect`), `discover`. Zie `agent/src/lib.rs`.
   openen van een pagina (`enter`/`restart_enter`) en glijden mee bij een nieuwe waarde, zijbalk en primaire knop
   met zachte overgang, pagina vervaagt in. Alleen bekeken zonder verbinding (Overzicht, Training, Planning,
   Instellingen); Club, Selectie en Transfers met een verbonden FM zijn niet opnieuw bekeken.
-- `cargo test -p fm27-trainer`: nu 4 tests (9 met de tactiekhulp van 14 nov).
+- `cargo test -p fm27-trainer`: nu 4 tests (9 met de tactiekhulp van 14 nov, 10 met de rusttest van 16 nov).
 
 ## Mac-opname (13 nov 2026, na 0.2.6, nog niet uitgebracht)
 
@@ -173,6 +173,35 @@ met `expect`), `discover`. Zie `agent/src/lib.rs`.
 - **Niet in FM klikken met `orca computer`**: klikken kwamen op andere knoppen terecht (o.a. "Messages") en één
   kwam in een lopende wedstrijd van Sem terecht. Een opname van het FM-venster maken kan wel zonder iets aan te
   raken (`fm27-trainer windows <png>`).
+
+## Meer managers, andere teams en rustniveau (16 nov 2026, in 0.2.7, nog niet uitgebracht)
+
+- Aanleiding: sortitoutsi-reacties ("tweede team leest de meters goed uit maar zet de training niet", "doet hij
+  ook de jeugdteams?", "verschillende rustniveaus"). De app nam altijd de **eerste** menselijke manager met een
+  club; bij twee managers in één save ging alles naar de eerste. Dat dit de oorzaak van de melding is, is een
+  aanname: niet bevestigd door de melder.
+- Module: `humans()` geeft alle menselijke managers; `chain()` neemt die van de gekozen club (`State.chosen_club`),
+  anders de eerste. `training_team()` = gekozen team uit de teamlijst van de club (`club+0x18`,
+  `State.chosen_team`), anders het team uit het contract; alleen `training_weeks`/`set_week` gebruiken dat, de
+  selectie en de rest blijven het eigen team. Het trainingsblok wordt nu per team onthouden. Opdrachten `teams`
+  en `select {club?, team?}` (een club zonder menselijke manager verandert niets). Team `+0x28` u8 soort
+  (0 eerste elftal, 10 O21, 12 O18), `+0x2C` u8 leeftijdsgrens (100 = geen): feiten uit FMLibreEditor, door ons
+  niet gemeten.
+- App: keuze op de Training-pagina (alleen zichtbaar bij > 1 manager of > 1 team), bewaard in de instellingen
+  (`manager_club`, `training_team`) en bij elke verversing en vóór elke trainingsopdracht opnieuw doorgegeven.
+  Testhulp `FM27_TEAMS_JSON=<bestand>`. Instellingen → Planner → Rust (`planner::Load`: Light / Balanced /
+  Intense).
+- **Alleen simulatie** (`run_market`: tweede manager bij Milan, eigen kalender voor het jeugdteam, schrijven +
+  undo) en een plannertest. **Niet live getest**: of FM voor een jeugd- of B-team een eigen weeklijst bijhoudt,
+  is niet gemeten. Er is één set uitgelezen waarden; die wordt niet per team bewaard.
+
+## Intel-Mac start niet (GitHub #5, 16 nov 2026, opgelost in 0.2.7, nog niet uitgebracht)
+
+- 0.2.6 crashte bij het starten op een Intel-Mac (macOS 15): `Library not loaded: @rpath/libswiftCoreMedia.dylib`,
+  `no LC_RPATH's found`. Nagekeken op de uitgebrachte DMG: alleen de x86_64-helft had die koppeling (via xcap →
+  AVFoundation/CoreMedia), de arm64-helft niet. xcap is nu alleen nog een afhankelijkheid buiten macOS
+  (`app/Cargo.toml`); de Mac heeft zijn eigen opname. De Intel-build heeft geen Swift-koppeling meer en start
+  onder Rosetta (`arch -x86_64 … help`). Niet op een echte Intel-Mac getest.
 
 ## Veiligheidsregels (altijd)
 

@@ -179,6 +179,12 @@ pub fn dispatch(req: &Value) -> Result<Value, String> {
             game::set_finances(g("transfer_budget"), g("wage_budget"), g("balance")).map(|c| json!(c))
         }
         "squad" => game::squad().map(|s| json!(s)),
+        "teams" => game::teams().map(|t| json!(t)),
+        "select" => {
+            let club = req.get("club").and_then(|v| v.as_u64()).map(|n| n as u32);
+            let team = req.get("team").and_then(|v| v.as_u64()).map(|n| n as usize);
+            game::select_team(club, team).map(|t| json!(t))
+        }
         "heal" => game::heal(&uids(req)).map(|n| json!({"players": n})),
         "lift_bans" => game::lift_bans(&uids(req)).map(|n| json!({"bans": n})),
         "inspire" => {

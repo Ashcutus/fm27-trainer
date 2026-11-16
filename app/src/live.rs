@@ -22,6 +22,7 @@ struct Snapshot {
     /// uitkomst van het op 100 % houden, als er iets teruggezet is
     kept: Option<Value>,
     human_flags: Option<Value>,
+    teams: Option<Value>,
     message: String,
     error: bool,
     untested: Option<bool>,
@@ -100,6 +101,10 @@ pub struct LiveState {
     /// tactieken en attributen van de selectie, voor de tactiekhulp (op verzoek opgehaald)
     pub tactics: Option<crate::tactics::Data>,
     pub tactics_error: String,
+    /// managers in de save en teams van de club (opdracht `select`; None bij een oudere module)
+    pub teams: Option<Value>,
+    /// keuze van de gebruiker: (UID van de club van de manager, plek van het team voor de training)
+    pub choice: (Option<u32>, Option<usize>),
     tactics_rx: Option<mpsc::Receiver<Result<Value, String>>>,
     aux_rx: Option<mpsc::Receiver<(Aux, Result<Value, String>)>>,
     rx: Option<mpsc::Receiver<Snapshot>>,
@@ -133,6 +138,8 @@ impl Default for LiveState {
             sell: SellState::default(),
             tactics: None,
             tactics_error: String::new(),
+            teams: None,
+            choice: (None, None),
             tactics_rx: None,
             aux_rx: None,
             rx: None,
@@ -141,6 +148,11 @@ impl Default for LiveState {
             last_poll: None,
         }
     }
+}
+
+/// Geeft de keuze van manager en team door aan de module; het antwoord is de lijst van managers en teams.
+fn select(choice: (Option<u32>, Option<usize>)) -> anyhow::Result<Value> {
+    agent::request(json!({"cmd": "select", "club": choice.0, "team": choice.1}))
 }
 
 fn short_result(v: &Value) -> String {
@@ -249,6 +261,20 @@ impl LiveState {
         self.tactics_rx.is_some()
     }
 
+    /// Een andere manager of een ander team: wat van het vorige team was, vervalt.
+    pub fn choose(&mut self, ctx: &egui::Context, choice: (Option<u32>, Option<usize>)) {
+        self.choice = choice;
+        self.training = None;
+        self.fm_had.clear();
+        self.tactics = None;
+        self.last_auto = Some(Instant::now());
+        self.last_poll = None;
+        // loopt er nog een opdracht voor het vorige team, dan volgt de verversing daarna vanzelf
+        if !self.busy() {
+            self.refresh(ctx, "", None);
+        }
+    }
+
     pub fn club_name(&self) -> Option<String> {
         self.club.as_ref()?.get("name")?.as_str().map(str::to_string)
     }
@@ -262,12 +288,15 @@ impl LiveState {
         let ctx2 = ctx.clone();
         let label = label.to_string();
         let allow = self.allow_untested;
+        let choice = self.choice;
         // een testopname (FM27_SNAPSHOT) mag nooit iets in FM veranderen
         let keep = self.keep_understanding && std::env::var_os("FM27_SNAPSHOT").is_none();
         std::thread::spawn(move || {
             let mut snap = Snapshot::default();
             // eerst de keuze van de gebruiker doorgeven (oudere modules kennen dit niet: geen probleem)
             let _ = agent::request(json!({"cmd": "allow_untested", "on": allow}));
+            // welke manager en welk team: vóór al het andere, zodat club en selectie erbij horen
+            snap.teams = select(choice).ok();
             if let Some(req) = action {
                 match agent::request(req) {
                     Ok(v) => snap.message = format!("{label}: {} {}", t!("klaar", "done"), short_result(&v)),
@@ -349,7 +378,7 @@ impl LiveState {
     }
 
     fn training_job(&mut self, ctx: &egui::Context, eff: &Effectiveness, settings: &PlannerSettings, write: bool, only_new: bool, auto: bool) {
-        if self.train_rx.is_some() {
+        if self.busy() {
             return;
         }
         let (tx, rx) = mpsc::channel();
@@ -357,7 +386,10 @@ impl LiveState {
         let _ = only_new;
         let skip: HashSet<NaiveDate> = HashSet::new();
         let ctx2 = ctx.clone();
+        let choice = self.choice;
         std::thread::spawn(move || {
+            // de keuze kan net veranderd zijn: nooit in de kalender van het vorige team schrijven
+            let _ = select(choice);
             let r = live_training::run(&eff, &settings, write, &skip).map_err(|e| format!("{e:#}"));
             let _ = tx.send((write, auto, r));
             ctx2.request_repaint();
@@ -387,6 +419,9 @@ impl LiveState {
                 }
                 if let Some(f) = s.human_flags {
                     self.human_flags = Some(f);
+                }
+                if self.connected {
+                    self.teams = s.teams;
                 }
                 if let Some(r) = s.kept {
                     let n = r.get("players").and_then(|v| v.as_u64()).unwrap_or(0);

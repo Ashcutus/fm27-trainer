@@ -68,12 +68,18 @@ struct Settings {
     auto_read: bool,
     #[serde(default = "ten")]
     auto_read_secs: u32,
+    /// Bij meer dan één manager in de save: de UID van de club van de manager die de app bedient.
+    #[serde(default)]
+    manager_club: Option<u32>,
+    /// Het team waarvan de app de training plant (plek in de teamlijst van de club; None = eigen team).
+    #[serde(default)]
+    training_team: Option<usize>,
     planner: PlannerSettings,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { lang: i18n::detect(), rate: 1.17, capture_delay: true, auto_training: true, allow_untested: false, keep_understanding: false, auto_read: false, auto_read_secs: 10, planner: PlannerSettings::default() }
+        Settings { lang: i18n::detect(), rate: 1.17, capture_delay: true, auto_training: true, allow_untested: false, keep_understanding: false, auto_read: false, auto_read_secs: 10, manager_club: None, training_team: None, planner: PlannerSettings::default() }
     }
 }
 
@@ -668,6 +674,14 @@ impl App {
         }
         let (m, e) = (self.live.train_status.clone(), self.live.train_error);
         self.status_line(ui, &m, e);
+        // testhulp: FM27_TEAMS_JSON=<bestand> toont de keuze zonder verbinding
+        let demo = std::env::var_os("FM27_TEAMS_JSON");
+        if let (Some(p), None) = (&demo, &self.live.teams) {
+            self.live.teams = std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok());
+        }
+        if connected || demo.is_some() {
+            self.team_picker(ui, ctx);
+        }
 
         // ---- statusblok: automatisch bijhouden
         let auto = self.settings.auto_training;
@@ -827,6 +841,85 @@ impl App {
     }
 
     // -------------------------------------------------------------------- planning
+
+    /// Keuze van manager (bij meer dan één in de save) en van het team waarvan de training gepland
+    /// wordt. Alleen zichtbaar als er iets te kiezen valt.
+    fn team_picker(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let Some(data) = self.live.teams.clone() else { return };
+        let list = |k: &str| data.get(k).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let (managers, teams) = (list("managers"), list("teams"));
+        if managers.len() < 2 && teams.len() < 2 {
+            return;
+        }
+        let team_name = |t: &Value| -> String {
+            let n = |k: &str| t.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+            let name = match (n("kind"), n("age_limit")) {
+                (0, _) => t!("Eerste elftal", "First team").to_string(),
+                (_, a) if (1..100).contains(&a) => t!(format!("Onder {a}"), format!("Under {a}")),
+                _ => t!(format!("Team {}", n("index") + 1), format!("Team {}", n("index") + 1)),
+            };
+            format!("{name} · {} {}", n("players"), t!("spelers", "players"))
+        };
+        let sel = |v: &Value| v.get("selected").and_then(|b| b.as_bool()) == Some(true);
+        let mut pick: Option<(Option<u32>, Option<usize>)> = None;
+        theme::card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(theme::ic(icon::USERS_THREE).color(theme::ACCENT));
+                if managers.len() > 1 {
+                    ui.label(t!("Manager van", "Manager of"));
+                    let cur = managers.iter().find(|m| sel(m)).and_then(|m| m["club"].as_str()).unwrap_or("?").to_string();
+                    egui::ComboBox::from_id_salt("manager_pick").selected_text(cur).show_ui(ui, |ui| {
+                        for m in &managers {
+                            let uid = m["club_uid"].as_u64().unwrap_or(0) as u32;
+                            if ui.selectable_label(sel(m), m["club"].as_str().unwrap_or("?")).clicked() && !sel(m) {
+                                pick = Some((Some(uid), None));
+                            }
+                        }
+                    });
+                    ui.add_space(14.0);
+                }
+                if teams.len() > 1 {
+                    ui.label(t!("Training van", "Training of"));
+                    let cur = teams.iter().find(|x| sel(x)).map(&team_name).unwrap_or_else(|| "?".into());
+                    egui::ComboBox::from_id_salt("team_pick").selected_text(cur).width(210.0).show_ui(ui, |ui| {
+                        for x in &teams {
+                            if ui.selectable_label(sel(x), team_name(x)).clicked() && !sel(x) {
+                                let own = x.get("own").and_then(|b| b.as_bool()) == Some(true);
+                                let idx = x["index"].as_u64().unwrap_or(0) as usize;
+                                pick = Some((self.settings.manager_club, if own { None } else { Some(idx) }));
+                            }
+                        }
+                    });
+                }
+            });
+            if teams.iter().any(|x| sel(x) && x.get("own").and_then(|b| b.as_bool()) != Some(true)) {
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(theme::dim(t!(
+                        "Dit is niet je eigen team. De app kan zijn training alleen plannen als FM er een eigen kalender voor bijhoudt (jij regelt de training van dit team). Het plan gebruikt de waarden die je het laatst hebt uitgelezen.",
+                        "This is not your own team. The app can only plan its training if FM keeps a calendar of its own for it (you run this team's training). The plan uses the values you read last."
+                    )))
+                    .wrap(),
+                );
+            } else if managers.len() > 1 {
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(theme::dim(t!(
+                        "Club, selectie, transfers en training horen bij de gekozen manager. Lees de Breakdown van dit team opnieuw uit voordat je de training laat plannen.",
+                        "Club, squad, transfers and training follow the chosen manager. Read this team's Breakdown again before you let the app plan its training."
+                    )))
+                    .wrap(),
+                );
+            }
+        });
+        ui.add_space(14.0);
+        if let Some((club, team)) = pick {
+            self.settings.manager_club = club;
+            self.settings.training_team = team;
+            self.save_settings();
+            self.live.choose(ctx, (club, team));
+        }
+    }
 
     fn page_planning(&mut self, ui: &mut Ui) {
         let mut tab = self.plan_tab;
@@ -2119,6 +2212,30 @@ impl App {
                     ui.label(t!("Doelen bijstellen elke (weken)", "Re-target every (weeks)"));
                     dirty |= ui.add(egui::DragValue::new(&mut self.settings.planner.replan_every_weeks).range(1..=8)).changed();
                 });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(t!("Rust", "Rest"));
+                    use planner::Load;
+                    dirty |= theme::segmented(
+                        ui,
+                        &mut self.settings.planner.load,
+                        &[(Load::Light, t!("Meer rust", "More rest")), (Load::Balanced, t!("Gebalanceerd", "Balanced")), (Load::Intense, t!("Minder rust", "Less rest"))],
+                    );
+                });
+                ui.add(
+                    egui::Label::new(theme::dim(match self.settings.planner.load {
+                        planner::Load::Light => t!(
+                            "Elke trainingsdag en de dag voor een wedstrijd eindigt met Rest.",
+                            "Every training day and the day before a match ends with Rest."
+                        ),
+                        planner::Load::Balanced => t!("Het gewone plan.", "The regular plan."),
+                        planner::Load::Intense => t!(
+                            "De dag na een wedstrijd krijgt na Recovery ook een tactische sessie.",
+                            "The day after a match gets a tactical session after Recovery."
+                        ),
+                    }))
+                    .wrap(),
+                );
             });
         });
         ui.add_space(14.0);
@@ -2215,6 +2332,7 @@ impl eframe::App for App {
             self.start_analysis(ctx, None);
         }
         self.live.allow_untested = self.settings.allow_untested;
+        self.live.choice = (self.settings.manager_club, self.settings.training_team);
         self.live.keep_understanding = self.settings.keep_understanding;
         self.live.tick(ctx, &self.eff, &self.settings.planner, self.settings.auto_training);
         self.sidebar(ctx);
