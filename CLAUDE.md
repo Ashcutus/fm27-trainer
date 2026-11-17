@@ -146,7 +146,12 @@ met `expect`), `discover`. Zie `agent/src/lib.rs`.
 - Antwoordteksten voor forums: Engels, in een codeblok (geen citaatopmaak), zodat Sem ze kan kopiëren.
 - Sem's Obsidian-kluis staat in `/Users/semhiel/Documents/Obsidian/Sem` (projectnotitie `Projecten/FM27 Trainer.md`).
 
-## FM-update van 17 nov 2026 (Steam 26620374) en versie 0.2.8 (nog niet uitgebracht)
+## FM-update van 17 nov 2026 (Steam 26620374) en versie 0.2.8 (uitgebracht op 17 nov 2026)
+
+- Uitgebracht: commit `e09460c`, tag `v0.2.8` op `origin` en `dev`, Mac-DMG (genotariseerd) en Windows-zip. GitHub #6
+  beantwoord (open tot de melder bevestigt); sortitoutsi-post bijgewerkt (via de CKEditor-instantie op de
+  bewerkpagina) en één reactie geplaatst voor Likes Banter Clubs, toomuchcoldbrew en Lajos Dijkstra. Wachten op
+  meldingen of Windows weer verbindt.
 
 - Meldingen "verbindt niet na de update" (GitHub #6, sortitoutsi). **Oorzaak**: in het financiënblok staat
   corporate niet meer op `+0x8A9` maar op `+0x8AD` (Tottenham 20, Ajax 18; `+0x8A9` is bij elke club 0).
@@ -169,7 +174,7 @@ met `expect`), `discover`. Zie `agent/src/lib.rs`.
   `planner.rs`); wedstrijd-, herstel- en rustdagen blijven gelijk. Test `no_tactical_sessions` (nu 11 tests in
   de app). Niet in FM's kalender nagekeken.
 - Open: Lajos Dijkstra (sortitoutsi, Windows, "latest version", verbindt niet; eerste melding van vóór de update).
-  Gevraagd om details.
+  Op 17 nov om details gevraagd (Steam of Game Pass, save geladen, statusregel).
 
 ## Mac-opname (13 nov 2026, uitgebracht in 0.2.7)
 
