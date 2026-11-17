@@ -147,6 +147,11 @@ the macOS DMG and a Windows zip for every `v*` tag.
 Project layout: `app/` (the app: egui UI, OCR, planner, live client), `agent/` (the module that runs inside
 FM), `tools/` (scripts for FM's `.fmf` archives and binary JSON), `docs/`.
 
+## Support
+
+FM27 Trainer is free and stays free. If it saves you time and you want to give something back, you can
+[donate on Ko-fi](https://ko-fi.com/semhiel). Every feature works without it.
+
 ## Roadmap
 
 - An in-app update check.

@@ -173,6 +173,9 @@ met `expect`), `discover`. Zie `agent/src/lib.rs`.
   van iemand die "Op 100 % houden" gebruikt): tactische plekken gaan naar ontwikkelsessies (`DEVELOPMENT` in
   `planner.rs`); wedstrijd-, herstel- en rustdagen blijven gelijk. Test `no_tactical_sessions` (nu 11 tests in
   de app). Niet in FM's kalender nagekeken.
+- 17 nov, avond: Likes Banter Clubs bevestigt op sortitoutsi dat 0.2.8 op **Windows Steam** weer verbindt (dus via
+  `discover`; schrijven niet bevestigd). Open: nicolas montiel, "no human manager with a club found" ook na opnieuw
+  installeren; platform en versie onbekend, om details gevraagd (comment_917651). Vermoeden: Game Pass, niet bevestigd.
 - Open: Lajos Dijkstra (sortitoutsi, Windows, "latest version", verbindt niet; eerste melding van vóór de update).
   Op 17 nov om details gevraagd (Steam of Game Pass, save geladen, statusregel).
 
@@ -469,3 +472,10 @@ FM27 gebruikt nepnamen voor clubs zonder licentie: AC Milan = **Casciavit Milano
   Met `FM27_SNAPSHOT` slaat de app het automatisch bijhouden van training over (sinds 8 nov 2026): een testopname
   schrijft nooit in FM. Zonder die variabele schrijft een gestarte app met "automatisch bijhouden" aan binnen
   enkele seconden het trainingsplan in FM; houd daar rekening mee bij tests tegen een echte save.
+
+## Donaties (17 nov 2026)
+
+- Ko-fi-pagina van Sem: `https://ko-fi.com/semhiel` (PayPal/Stripe op 17 nov nog niet gekoppeld). De link staat in
+  `.github/FUNDING.yml`, de README ("Support"), de sortitoutsi-post (kopje "Support" boven "Credits") en in de app
+  (Instellingen → "Steun de ontwikkeling", `DONATE_URL` in `app/src/gui.rs`; komt mee in de versie ná 0.2.8).
+  In sortitoutsi's voorwaarden stond niets over donatielinks.

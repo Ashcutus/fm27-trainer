@@ -2312,6 +2312,20 @@ impl App {
         });
         ui.add_space(14.0);
         theme::card(ui, |ui| {
+            ui.label(theme::h2(t!("Steun de ontwikkeling", "Support development")));
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(theme::dim(t!(
+                "FM27 Trainer is gratis en blijft gratis. Wil je iets terugdoen voor het werk, dan kan dat met een donatie. Alle functies werken ook zonder.",
+                "FM27 Trainer is free and stays free. If you want to give something back for the work, you can donate. Every feature works without it."
+            )))
+            .wrap());
+            ui.add_space(6.0);
+            if theme::button(ui, icon::HEART, t!("Doneer via Ko-fi", "Donate on Ko-fi"), true).clicked() {
+                open_path(std::path::Path::new(DONATE_URL));
+            }
+        });
+        ui.add_space(14.0);
+        theme::card(ui, |ui| {
             ui.label(theme::h2(t!("Over", "About")));
             ui.add(egui::Label::new(theme::dim(t!(
                 "Sessienamen, limieten en presets komen uit FM27's eigen game-data. De module leest en schrijft alleen na controle, met undo. Alleen voor single-player. Lettertype: Inter (SIL OFL). Iconen: Phosphor (MIT).",
@@ -2384,6 +2398,9 @@ impl eframe::App for App {
 }
 
 // ------------------------------------------------------------------------ helpers
+
+/// Donatiepagina (knop op Instellingen).
+const DONATE_URL: &str = "https://ko-fi.com/semhiel";
 
 fn open_path(p: &std::path::Path) {
     #[cfg(target_os = "macos")]
