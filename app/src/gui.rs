@@ -2236,6 +2236,17 @@ impl App {
                     }))
                     .wrap(),
                 );
+                ui.add_space(6.0);
+                dirty |= ui
+                    .checkbox(&mut self.settings.planner.no_tactical, t!("Geen tactische sessies", "No tactical sessions"))
+                    .changed();
+                ui.add(
+                    egui::Label::new(theme::dim(t!(
+                        "Die plekken gaan naar spelersontwikkeling; wedstrijdvoorbereiding blijft. Bedoeld voor wie het tactisch begrip op 100 % laat houden (Selectie).",
+                        "Those slots go to player development; match preparation stays. Meant for use with \"Keep at 100 %\" for tactical understanding (Squad)."
+                    )))
+                    .wrap(),
+                );
             });
         });
         ui.add_space(14.0);
