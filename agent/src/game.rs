@@ -394,6 +394,7 @@ pub(crate) struct Change {
 #[derive(Default)]
 struct State {
     human: Option<u64>,
+    humans: Option<(std::time::Instant, Vec<u64>)>,
     /// per team: (adres van de team-pointer in het trainingsblok, afstand tot de weeklijst)
     training_block: std::collections::HashMap<u64, (u64, u64)>,
     /// keuze van de gebruiker bij meer dan één menselijke manager: UID van zijn club
@@ -464,6 +465,7 @@ pub fn reset() {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
     *g = None;
     drop(g);
+    mem::reset_game_plugin();
     crate::sell::reset();
 }
 
@@ -661,6 +663,12 @@ fn humans_via_manager_list(img: &mem::Image) -> Vec<Chain> {
 
 /// Alle menselijke managers met een club (een save kan er meer dan één hebben), elk één keer.
 fn humans() -> Result<Vec<Chain>, String> {
+    if let Some((_, addrs)) = with_state(|s| s.humans.as_ref().filter(|(at, addrs)| !addrs.is_empty() && at.elapsed().as_secs() < 300).cloned()) {
+        if let Some(chains) = addrs.into_iter().map(check_chain).collect::<Option<Vec<_>>>() {
+            return Ok(chains);
+        }
+    }
+    with_state(|s| s.humans = None);
     let img = mem::game_plugin().ok_or("game_plugin niet geladen (laadt FM nog?) / game_plugin not loaded yet")?;
     let or = |a: Vec<Chain>, f: &dyn Fn() -> Vec<Chain>| if a.is_empty() { f() } else { a };
     // op Windows eerst de staflijst (geen RTTI nodig), op de Mac eerst de geteste RTTI-weg
@@ -673,6 +681,7 @@ fn humans() -> Result<Vec<Chain>, String> {
     if found.is_empty() {
         return Err("geen menselijke manager met club gevonden. Is er een save geladen? / No human manager with a club found. Is a save loaded?".into());
     }
+    with_state(|s| s.humans = Some((std::time::Instant::now(), found.iter().map(|c| c.human).collect())));
     Ok(found)
 }
 
@@ -685,10 +694,14 @@ pub fn chain() -> Result<Chain, String> {
         }
     }
     let all = humans()?;
+    Ok(choose_chain(&all))
+}
+
+fn choose_chain(all: &[Chain]) -> Chain {
     let want = with_state(|s| s.chosen_club);
     let c = want.and_then(|u| all.iter().find(|c| mem::u32_at(c.club + CLUB_UID) == Some(u))).unwrap_or(&all[0]);
     with_state(|s| s.human = Some(c.human));
-    Ok(*c)
+    *c
 }
 
 const CLUB_TEAMS: u64 = 0x18;
@@ -733,8 +746,14 @@ pub struct Teams {
 
 /// De menselijke managers in de save en de teams van de club van de gekozen manager.
 pub fn teams() -> Result<Teams, String> {
-    let c = chain()?;
-    let managers = humans()?
+    Ok(teams_for(&humans()?))
+}
+
+fn teams_for(all: &[Chain]) -> Teams {
+    let c = with_state(|s| s.human)
+        .and_then(|h| all.iter().find(|c| c.human == h).copied().or_else(|| check_chain(h)))
+        .unwrap_or_else(|| choose_chain(all));
+    let managers = all
         .iter()
         .map(|h| ManagerInfo { club_uid: mem::u32_at(h.club + CLUB_UID).unwrap_or(0), club: club_name(h.club).unwrap_or_default(), selected: h.human == c.human })
         .collect();
@@ -752,17 +771,15 @@ pub fn teams() -> Result<Teams, String> {
             selected: t == chosen,
         })
         .collect();
-    Ok(Teams { managers, teams })
+    Teams { managers, teams }
 }
 
 /// Kiest de manager (op de UID van zijn club) en het team voor de training. Zonder `club` blijft
 /// de manager; `team` None = het eigen team van de manager.
 pub fn select_team(club: Option<u32>, team: Option<usize>) -> Result<Teams, String> {
     // een club zonder menselijke manager (een oude keuze uit een andere save) verandert niets
-    let club = match club {
-        Some(u) if humans()?.iter().any(|c| mem::u32_at(c.club + CLUB_UID) == Some(u)) => Some(u),
-        _ => None,
-    };
+    let all = humans()?;
+    let club = club.filter(|u| all.iter().any(|c| mem::u32_at(c.club + CLUB_UID) == Some(*u)));
     with_state(|s| {
         if let Some(u) = club {
             if s.chosen_club != Some(u) {
@@ -772,7 +789,7 @@ pub fn select_team(club: Option<u32>, team: Option<usize>) -> Result<Teams, Stri
         }
         s.chosen_team = team;
     });
-    teams()
+    Ok(teams_for(&all))
 }
 
 #[derive(Serialize)]
