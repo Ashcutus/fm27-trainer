@@ -55,6 +55,9 @@ pub struct Analysis {
     pub ocr: String,
     /// hoogte van de labels (mediaan), voor de tweede meting op de referentiegrootte
     pub text_height: Option<f32>,
+    /// titels, labels en koppen ("Key Factors") die de OCR in de beste taal zag: 0 = niets dat op
+    /// de Breakdown lijkt
+    pub signs: usize,
 }
 
 impl Analysis {
@@ -74,11 +77,22 @@ impl Analysis {
 
 /// Legt het FM27-venster vast (vereist "Schermopname"-toestemming in Systeeminstellingen).
 pub fn capture_fm_window() -> Result<RgbaImage> {
+    capture_fm_window_as(false)
+}
+
+/// Als `capture_fm_window`, voor het automatisch uitlezen: haalt FM nooit naar voren (het Linux-hulpje
+/// geeft dan een fout als FM niet in beeld is) en laat de focus waar hij is.
+pub fn capture_fm_window_auto() -> Result<RgbaImage> {
+    capture_fm_window_as(true)
+}
+
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn capture_fm_window_as(auto: bool) -> Result<RgbaImage> {
     #[cfg(target_os = "macos")]
     return mac_capture::capture();
     #[cfg(windows)]
     if wine_bridge::active() {
-        return wine_bridge::capture();
+        return wine_bridge::capture(auto);
     }
     #[cfg(not(target_os = "macos"))]
     capture_fm_window_xcap()
@@ -143,8 +157,10 @@ pub mod wine_bridge {
         }
     }
 
-    pub fn capture() -> Result<RgbaImage> {
-        let v = request(&new_id(), json!({ "op": "capture" }), Duration::from_secs(15))?;
+    /// `auto`: het automatisch uitlezen; het hulpje verandert dan de focus niet en meldt het als FM
+    /// niet in beeld is, in plaats van FM naar voren te halen.
+    pub fn capture(auto: bool) -> Result<RgbaImage> {
+        let v = request(&new_id(), json!({ "op": "capture", "auto": auto }), Duration::from_secs(15))?;
         let name = v["image"].as_str().ok_or_else(|| anyhow!("fm27-ocr-bridge: geen beeld"))?;
         let path = dir().join(Path::new(name).file_name().unwrap_or_default());
         let img = image::open(&path).with_context(|| path.display().to_string())?.to_rgba8();
@@ -1345,13 +1361,20 @@ const REF_TEXT: f32 = 20.0;
 /// Leest de OCR in de taal van het profiel bijna niets van de Breakdown (FM in het Japans terwijl
 /// Windows Engels leest, of andersom), dan nog eens in elke andere geïnstalleerde OCR-taal.
 pub fn analyze_image(img: &RgbaImage) -> Result<(Analysis, Vec<OcrLine>)> {
-    let mut best = analyze_in(img, None)?;
+    analyze_image_with(img, true)
+}
+
+/// `thorough`: bij een opname zonder enig teken van de Breakdown toch de vergrotingen proberen. Het
+/// automatisch uitlezen doet dat niet: FM staat meestal op een ander scherm, en elke vergroting is
+/// een volledige OCR-ronde (op Linux vele CPU-seconden).
+pub fn analyze_image_with(img: &RgbaImage, thorough: bool) -> Result<(Analysis, Vec<OcrLine>)> {
+    let mut best = analyze_in(img, None, thorough)?;
     if best.0.labels < 6 {
         for tag in ocr_languages() {
             if tag.eq_ignore_ascii_case(&best.0.ocr) {
                 continue;
             }
-            let Ok(other) = analyze_in(img, Some(&tag)) else { continue };
+            let Ok(other) = analyze_in(img, Some(&tag), thorough) else { continue };
             if (other.0.gauges.len(), other.0.labels) > (best.0.gauges.len(), best.0.labels) {
                 best = other;
             }
@@ -1379,7 +1402,7 @@ fn merge_readings(a: &mut Analysis, other: &Analysis) {
     a.labels = a.labels.max(other.labels);
 }
 
-fn analyze_in(img: &RgbaImage, lang: Option<&str>) -> Result<(Analysis, Vec<OcrLine>)> {
+fn analyze_in(img: &RgbaImage, lang: Option<&str>, thorough: bool) -> Result<(Analysis, Vec<OcrLine>)> {
     let (lines, tag) = ocr(img, lang)?;
     let mut first = analyze_with_lines(img, &lines);
     first.ocr = tag.clone();
@@ -1387,7 +1410,11 @@ fn analyze_in(img: &RgbaImage, lang: Option<&str>) -> Result<(Analysis, Vec<OcrL
     let scales: Vec<f32> = match best.0.text_height {
         Some(th) if (th - REF_TEXT).abs() / REF_TEXT > 0.12 => vec![REF_TEXT / th],
         Some(_) => Vec::new(),
-        None => vec![1.5, 2.0],
+        // zonder één herkend label: de kleine tekst vraagt om een vergroting. Zag de eerste ronde
+        // niets van de Breakdown (geen titel, label of kop), dan is het (bij het automatisch
+        // uitlezen) een ander FM-scherm: dat kost geen twee extra OCR-rondes
+        None if thorough || best.0.signs > 0 => vec![1.5, 2.0],
+        None => Vec::new(),
     };
     for k in scales {
         let (w, h) = ((img.width() as f32 * k).round() as u32, (img.height() as f32 * k).round() as u32);
@@ -1600,6 +1627,7 @@ pub fn analyze_with_lines(img: &RgbaImage, lines: &[OcrLine]) -> Analysis {
         labels: m.count(),
         ocr: String::new(),
         text_height,
+        signs: m.count() + m.heads.len(),
     }
 }
 
@@ -1623,19 +1651,106 @@ pub fn report(a: &Analysis, lines: &[OcrLine]) -> String {
     s
 }
 
+// ---------------------------------------------------------------- vingerafdruk
+
+/// Grof beeld van een opname om te zien of FM sinds de vorige uitlezing veranderd is: het gemiddelde
+/// van elk blokje (4 × 4 px bij 2560 breed) per kleurkanaal, zonder de bovenste balk met de klok en
+/// de FPS-teller. Fijn genoeg om één gewijzigd taartpunt van een meter (±16 px) te zien.
+#[derive(Clone)]
+pub struct Fingerprint {
+    size: (u32, u32),
+    cells: Vec<[u8; 3]>,
+}
+
+const FP_COLS: u32 = 640;
+const FP_ROWS: u32 = 360;
+/// de bovenste 7 % (menu, klok, FPS-teller) doet niet mee
+const FP_SKIP_ROWS: u32 = FP_ROWS * 7 / 100;
+/// een blokje is veranderd als een kanaal meer dan dit verschilt (van 255)
+const FP_CELL_DIFF: i32 = 6;
+/// zoveel blokjes mogen verschillen (ruis) zonder dat het scherm als veranderd telt
+const FP_NOISE_CELLS: usize = 1;
+
+static LAST_READ: std::sync::Mutex<Option<(Fingerprint, bool)>> = std::sync::Mutex::new(None);
+
+pub fn fingerprint(img: &RgbaImage) -> Fingerprint {
+    let (w, h) = (img.width(), img.height());
+    let raw = img.as_raw();
+    let mut cells = Vec::with_capacity(((FP_ROWS - FP_SKIP_ROWS) * FP_COLS) as usize);
+    for cy in FP_SKIP_ROWS..FP_ROWS {
+        let (y0, y1) = (cy * h / FP_ROWS, ((cy + 1) * h / FP_ROWS).max(cy * h / FP_ROWS + 1).min(h));
+        for cx in 0..FP_COLS {
+            let (x0, x1) = (cx * w / FP_COLS, ((cx + 1) * w / FP_COLS).max(cx * w / FP_COLS + 1).min(w));
+            let mut sum = [0u32; 3];
+            for y in y0..y1 {
+                let row = (y * w) as usize * 4;
+                for px in raw[row + x0 as usize * 4..row + x1 as usize * 4].chunks_exact(4) {
+                    sum[0] += px[0] as u32;
+                    sum[1] += px[1] as u32;
+                    sum[2] += px[2] as u32;
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)).max(1);
+            cells.push([(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8]);
+        }
+    }
+    Fingerprint { size: (w, h), cells }
+}
+
+/// Zelfde scherm: even groot, en op hooguit `FP_NOISE_CELLS` blokjes na hetzelfde.
+pub fn same_screen(a: &Fingerprint, b: &Fingerprint) -> bool {
+    a.size == b.size
+        && a.cells.len() == b.cells.len()
+        && a.cells.iter().zip(&b.cells).filter(|(p, q)| (0..3).any(|c| (p[c] as i32 - q[c] as i32).abs() > FP_CELL_DIFF)).count() <= FP_NOISE_CELLS
+}
+
 pub fn analyze_file(path: &std::path::Path) -> Result<(Analysis, Vec<OcrLine>)> {
     let img = image::open(path).with_context(|| path.display().to_string())?.to_rgba8();
     analyze_image(&img)
 }
 
 pub fn analyze_screen() -> Result<(Analysis, RgbaImage)> {
-    let img = capture_fm_window()?;
+    read_screen(capture_fm_window()?, true)
+}
+
+/// Wat het automatisch uitlezen ziet.
+pub enum AutoRead {
+    /// het FM-scherm is (vrijwel) hetzelfde als bij de vorige uitlezing: er is niets uitgelezen;
+    /// `complete` zegt of die vorige uitlezing een volledige Breakdown was
+    Unchanged { complete: bool },
+    Read(Analysis),
+}
+
+/// Automatisch uitlezen: legt FM vast zonder de focus te verplaatsen en leest alleen als het scherm
+/// sinds de vorige uitlezing veranderd is. Een ongewijzigd scherm kost zo alleen de opname, geen
+/// OCR; en zonder teken van de Breakdown blijft het bij één OCR-ronde.
+pub fn analyze_screen_auto() -> Result<AutoRead> {
+    let img = capture_fm_window_auto()?;
+    if let Some((prev, complete)) = LAST_READ.lock().ok().and_then(|g| g.clone())
+        && same_screen(&prev, &fingerprint(&img))
+    {
+        return Ok(AutoRead::Unchanged { complete });
+    }
+    read_screen(img, false).map(|(a, _)| AutoRead::Read(a))
+}
+
+/// Een volledige, zekere uitlezing van de Breakdown (zoals de app die als bijgewerkt neemt).
+fn is_complete(a: &Analysis) -> bool {
+    a.gauges.len() >= 17 && a.components.len() >= 4 && !a.gauges.iter().any(|g| g.doubt)
+}
+
+fn read_screen(img: RgbaImage, thorough: bool) -> Result<(Analysis, RgbaImage)> {
     // de opname bewaren, zodat een verkeerde uitlezing achteraf na te spelen is:
     // `fm27-trainer analyze "<map>\last-capture.png" --ocr`
     let dir = crate::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = img.save(dir.join("last-capture.png"));
-    let (a, lines) = analyze_image(&img)?;
+    let fp = fingerprint(&img);
+    let (a, lines) = analyze_image_with(&img, thorough)?;
+    // onthouden voor het automatisch uitlezen, ook als dit geen Breakdown bleek te zijn
+    if let Ok(mut last) = LAST_READ.lock() {
+        *last = Some((fp, is_complete(&a)));
+    }
     // wat de uitlezing zag, om mee te sturen bij een melding
     let _ = std::fs::write(dir.join("last-analysis.txt"), report(&a, &lines));
     if a.gauges.len() >= 4 {
@@ -1860,6 +1975,7 @@ mod tests {
             labels: 21,
             ocr: String::new(),
             text_height: Some(20.0),
+            signs: 21,
         };
         let mut a = analysis(vec![g(Factor::BuildUp, 40.0, false), g(Factor::LineOfEngagement, 0.0, true)], vec![(Component::PlayerAbility, 30.0)]);
         a.missing.push(Factor::PressingTrap);
