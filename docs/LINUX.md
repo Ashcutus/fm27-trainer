@@ -50,13 +50,22 @@ That's it: start FM27 from Steam and FM27 Trainer opens alongside it, and closes
   `app/src/vision.rs`) instead of using xcap and Windows.Media.Ocr. On Windows the folder never exists, so
   nothing changes there. The helper exits when FM27 does and closes the trainer, so Steam doesn't keep FM27
   "running".
-- The capture brings FM's window to the front if it isn't visible, and gives focus back afterwards.
-- OCR: the capture is made grey, scaled 2×, contrast-stretched and inverted, then read by Tesseract
-  (`--psm 3`). Words far apart on one line are split into separate lines, as Windows' OCR does (otherwise a
-  title gets joined to the bar at the other end of its panel).
+- A manual **Read FM screen** brings FM's window to the front if it isn't visible, and gives focus back
+  afterwards. The automatic read (the app's "auto-read" setting) never does: its capture request carries
+  `"auto": true`, and when FM is not on screen (or another window is on top of it) the helper answers with an
+  error, which the app shows as "waiting for the Breakdown in FM".
+- OCR: the capture is made grey, scaled 2× (but never to more than 5120 px wide: the app already enlarges
+  small text itself, so a fixed 2× on top fed Tesseract 10240×5760 images), contrast-stretched and inverted,
+  then read by Tesseract (`--psm 3`). Words far apart on one line are split into separate lines, as Windows'
+  OCR does (otherwise a title gets joined to the bar at the other end of its panel). An `ocr` request may
+  carry `"upscale": N` to override the 2×.
+- Cost: the helper runs at nice 10, Tesseract and ImageMagick single-threaded (a pass costs about half the CPU
+  of the OpenMP default), and `grim` writes an uncompressed PNG. In the app, auto-read compares a coarse
+  fingerprint of each capture with the previous one and does no OCR while FM looks the same, and without any
+  sign of the Breakdown in the first OCR pass it skips the 1.5×/2× passes (a manual read still does them).
 
-Testing: `fm27-ocr-bridge capture out.png` captures FM's window; `fm27-ocr-bridge ocr out.png` prints what the
-OCR reads. Logs: `~/.cache/fm27-ocr-bridge.log` and `~/.cache/fm27-trainer.log`.
+Testing: `fm27-ocr-bridge capture out.png [--auto]` captures FM's window; `fm27-ocr-bridge ocr out.png [UPSCALE]`
+prints what the OCR reads. Logs: `~/.cache/fm27-ocr-bridge.log` and `~/.cache/fm27-trainer.log`.
 
 ## Limits
 

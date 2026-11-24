@@ -2024,6 +2024,40 @@ mod tests {
 "));
     }
 
+    /// Het automatisch uitlezen slaat de OCR over als FM er hetzelfde uitziet: ruis en de bovenste
+    /// balk (klok, FPS-teller) tellen niet, één gewijzigd taartpunt van een meter wel.
+    #[test]
+    fn fingerprint_sees_a_gauge_change_but_not_noise() {
+        let mut base = RgbaImage::from_pixel(2560, 1440, Rgba([40, 30, 32, 255]));
+        for y in 340..360 {
+            for x in 495..515 {
+                base.put_pixel(x, y, Rgba([218, 206, 208, 255]));
+            }
+        }
+        let fp = fingerprint(&base);
+        assert!(same_screen(&fp, &fingerprint(&base)));
+        let mut noisy = base.clone();
+        for (i, p) in noisy.pixels_mut().enumerate() {
+            p[0] = p[0].saturating_add((i % 5) as u8);
+        }
+        assert!(same_screen(&fp, &fingerprint(&noisy)), "ruis");
+        let mut top = base.clone();
+        for y in 10..40 {
+            for x in 2270..2300 {
+                top.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        assert!(same_screen(&fp, &fingerprint(&top)), "bovenste balk");
+        let mut wedge = base.clone();
+        for y in 346..350 {
+            for x in 503..507 {
+                wedge.put_pixel(x, y, Rgba([200, 220, 40, 255]));
+            }
+        }
+        assert!(!same_screen(&fp, &fingerprint(&wedge)), "één taartpunt");
+        assert!(!same_screen(&fp, &fingerprint(&RgbaImage::from_pixel(1920, 1080, Rgba([40, 30, 32, 255])))), "andere grootte");
+    }
+
     #[test]
     fn colour_disagrees_with_fill() {
         // een oranje meter die als 90 % gemeten wordt: naar de rand van oranje, en nakijken
